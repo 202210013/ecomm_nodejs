@@ -36,7 +36,7 @@ Your Node.js backend is trying to connect to `localhost:3306` (local MySQL), but
      DB_PASSWORD=pscale_pw_xxxxx
      DB_SSL=true
      NODE_ENV=production
-     PORT=3000
+     PORT=3001
      JWT_SECRET=your-production-jwt-secret-here
      SESSION_SECRET=your-production-session-secret-here
      ALLOWED_ORIGINS=https://localfit.store,https://api.localfit.store
@@ -101,7 +101,7 @@ If you're open to switching from MySQL to PostgreSQL:
 
 ```
 NODE_ENV=production
-PORT=3000
+PORT=3001
 
 # Database (from your chosen provider)
 DB_HOST=your-db-host

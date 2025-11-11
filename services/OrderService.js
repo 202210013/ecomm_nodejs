@@ -19,13 +19,61 @@ class OrderService {
         };
       }
 
-      // Insert orders one by one
+      // Insert orders one by one and update stock
       for (const order of orders) {
         const size = order.size || 'M';
         const pickupDate = order.pickup_date || null;
         
         console.log(`Processing order - Product: ${order.product}, Size: ${size}, Pickup Date: ${pickupDate || 'NULL'}`);
         
+        // First, get the product to check and update stock
+        const product = await queryOne(
+          'SELECT id, name, size_quantities, quantity FROM products WHERE name = ?',
+          [order.product]
+        );
+
+        if (!product) {
+          console.error(`Product not found: ${order.product}`);
+          return {
+            success: false,
+            error: `Product not found: ${order.product}`,
+            status: 404
+          };
+        }
+
+        // Parse size quantities
+        let sizeQuantities = {};
+        try {
+          sizeQuantities = product.size_quantities ? JSON.parse(product.size_quantities) : {};
+        } catch (e) {
+          console.error('Error parsing size_quantities:', e);
+        }
+
+        // Check if enough stock is available for this size
+        const currentSizeStock = sizeQuantities[size] || 0;
+        if (currentSizeStock < order.quantity) {
+          return {
+            success: false,
+            error: `Insufficient stock for ${order.product} (Size: ${size}). Available: ${currentSizeStock}, Requested: ${order.quantity}`,
+            status: 400
+          };
+        }
+
+        // Update size-specific quantity
+        sizeQuantities[size] = currentSizeStock - order.quantity;
+
+        // Calculate new total quantity
+        const newTotalQuantity = Object.values(sizeQuantities).reduce((sum, qty) => sum + qty, 0);
+
+        // Update product stock in database
+        await query(
+          'UPDATE products SET size_quantities = ?, quantity = ? WHERE id = ?',
+          [JSON.stringify(sizeQuantities), newTotalQuantity, product.id]
+        );
+
+        console.log(`Stock updated for ${order.product} - Size ${size}: ${currentSizeStock} -> ${sizeQuantities[size]}, Total: ${product.quantity} -> ${newTotalQuantity}`);
+
+        // Insert the order
         await query(
           `INSERT INTO ${this.tableName} 
            (customer, product, quantity, size, status, created_at, pickup_date) 
@@ -42,7 +90,7 @@ class OrderService {
 
       return {
         success: true,
-        message: 'Orders created successfully'
+        message: 'Orders created successfully and stock updated'
       };
     } catch (error) {
       console.error('Error creating orders:', error);
@@ -143,8 +191,11 @@ class OrderService {
         };
       }
 
-      // Check if order exists
-      const order = await queryOne(`SELECT id FROM ${this.tableName} WHERE id = ?`, [orderId]);
+      // Get order details including product and quantity
+      const order = await queryOne(
+        `SELECT id, product, quantity, size, status FROM ${this.tableName} WHERE id = ?`,
+        [orderId]
+      );
 
       if (!order) {
         return {
@@ -152,6 +203,40 @@ class OrderService {
           error: 'Order not found',
           status: 404
         };
+      }
+
+      // Only restore stock if order was not already declined or completed
+      if (order.status !== 'declined' && order.status !== 'completed') {
+        // Get product details
+        const product = await queryOne(
+          'SELECT id, name, size_quantities, quantity FROM products WHERE name = ?',
+          [order.product]
+        );
+
+        if (product) {
+          // Parse size quantities
+          let sizeQuantities = {};
+          try {
+            sizeQuantities = product.size_quantities ? JSON.parse(product.size_quantities) : {};
+          } catch (e) {
+            console.error('Error parsing size_quantities:', e);
+          }
+
+          // Restore stock for the specific size
+          const currentSizeStock = sizeQuantities[order.size] || 0;
+          sizeQuantities[order.size] = currentSizeStock + order.quantity;
+
+          // Calculate new total quantity
+          const newTotalQuantity = Object.values(sizeQuantities).reduce((sum, qty) => sum + qty, 0);
+
+          // Update product stock in database
+          await query(
+            'UPDATE products SET size_quantities = ?, quantity = ? WHERE id = ?',
+            [JSON.stringify(sizeQuantities), newTotalQuantity, product.id]
+          );
+
+          console.log(`Stock restored for ${order.product} - Size ${order.size}: ${currentSizeStock} -> ${sizeQuantities[order.size]}, Total: ${product.quantity} -> ${newTotalQuantity}`);
+        }
       }
 
       // Update order status and remarks
@@ -167,10 +252,10 @@ class OrderService {
         );
       }
 
-      console.log("Order declined successfully");
+      console.log("Order declined successfully and stock restored");
       return {
         success: true,
-        message: 'Order declined successfully'
+        message: 'Order declined successfully and stock restored'
       };
     } catch (error) {
       console.error('Error declining order:', error);
