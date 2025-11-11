@@ -13,7 +13,10 @@ const dbConfig = {
   // Valid MySQL2 pool options only
   connectionLimit: 10,
   queueLimit: 0,
-  ssl: false,
+  // Enable SSL for production databases
+  ssl: process.env.DB_SSL === 'true' ? {
+    rejectUnauthorized: true
+  } : false,
   multipleStatements: false,
   dateStrings: true,
   // Remove invalid options: acquireTimeout, timeout, reconnect
