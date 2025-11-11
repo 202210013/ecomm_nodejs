@@ -154,7 +154,6 @@ class OrderService {
         };
       }
 
-
       // Update order status and remarks
       if (remarks) {
         await query(
