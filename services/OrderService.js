@@ -24,20 +24,63 @@ class OrderService {
         const size = order.size || 'M';
         const pickupDate = order.pickup_date || null;
         
-        console.log(`Processing order - Product: ${order.product}, Size: ${size}, Pickup Date: ${pickupDate || 'NULL'}`);
+        // Determine order status based on pickup date
+        // If no pickup date, it's a production order for out-of-stock items
+        const orderStatus = pickupDate ? 'pending' : 'pending-production';
         
+        console.log(`Processing order - Product: ${order.product}, Size: ${size}, Pickup Date: ${pickupDate || 'NULL'}, Status: ${orderStatus}`);
+        
+        // Insert the order
         await query(
           `INSERT INTO ${this.tableName} 
            (customer, product, quantity, size, status, created_at, pickup_date) 
-           VALUES (?, ?, ?, ?, 'pending', NOW(), ?)`,
+           VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
           [
             order.customer,
             order.product,
             order.quantity,
             size,
+            orderStatus,
             pickupDate
           ]
         );
+
+        // Only reduce quantity for in-stock orders (status = 'pending')
+        if (orderStatus === 'pending') {
+          // Get the product's current size_quantities
+          const product = await queryOne(
+            'SELECT size_quantities FROM products WHERE name = ?',
+            [order.product]
+          );
+
+          if (product && product.size_quantities) {
+            try {
+              const sizeQuantities = JSON.parse(product.size_quantities);
+              
+              // Reduce the quantity for the ordered size
+              if (sizeQuantities[size] !== undefined) {
+                sizeQuantities[size] = Math.max(0, sizeQuantities[size] - order.quantity);
+                
+                console.log(`Reduced quantity for ${order.product} size ${size}: ${sizeQuantities[size]}`);
+                
+                // Calculate the new total quantity (sum of all sizes)
+                const totalQuantity = Object.values(sizeQuantities).reduce((sum, qty) => sum + qty, 0);
+                
+                console.log(`New total quantity for ${order.product}: ${totalQuantity}`);
+                
+                // Update the product with new quantities AND total quantity
+                await query(
+                  'UPDATE products SET size_quantities = ?, quantity = ? WHERE name = ?',
+                  [JSON.stringify(sizeQuantities), totalQuantity, order.product]
+                );
+              }
+            } catch (parseError) {
+              console.error('Error parsing size_quantities:', parseError);
+            }
+          }
+        } else {
+          console.log(`Skipping quantity reduction for production order (status: ${orderStatus})`);
+        }
       }
 
       return {
@@ -446,6 +489,62 @@ class OrderService {
       return {
         success: false,
         error: 'Failed to fetch order statistics',
+        status: 500
+      };
+    }
+  }
+
+  // Update order status and pickup date (for production orders)
+  async updateOrderStatus(orderId, status, pickupDate = null) {
+    try {
+      if (!orderId) {
+        return {
+          success: false,
+          error: 'Order ID is required',
+          status: 400
+        };
+      }
+
+      // Check if order exists
+      const order = await queryOne(
+        `SELECT id, status as current_status FROM ${this.tableName} WHERE id = ?`,
+        [orderId]
+      );
+
+      if (!order) {
+        return {
+          success: false,
+          error: 'Order not found',
+          status: 404
+        };
+      }
+
+      console.log(`Updating order ${orderId} from ${order.current_status} to ${status}`);
+
+      // Update order status and pickup date
+      if (pickupDate) {
+        await query(
+          `UPDATE ${this.tableName} SET status = ?, pickup_date = ? WHERE id = ?`,
+          [status, pickupDate, orderId]
+        );
+      } else {
+        await query(
+          `UPDATE ${this.tableName} SET status = ? WHERE id = ?`,
+          [status, orderId]
+        );
+      }
+
+      console.log("Order updated successfully");
+      return {
+        success: true,
+        message: 'Order updated successfully',
+        pickup_date: pickupDate
+      };
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      return {
+        success: false,
+        error: 'Failed to update order',
         status: 500
       };
     }

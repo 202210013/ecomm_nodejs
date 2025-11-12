@@ -222,6 +222,34 @@ router.post('/orders', asyncHandler(async (req, res) => {
   }
 }));
 
+// PUT route to update order status and pickup date
+router.put('/orders/:id', asyncHandler(async (req, res) => {
+  await requireAuthentication(req, res, async () => {
+    const orderId = req.params.id;
+    const { status, pickup_date } = req.body;
+    
+    console.log("=== UPDATE ORDER DEBUG ===");
+    console.log("Order ID:", orderId);
+    console.log("New Status:", status);
+    console.log("Pickup Date:", pickup_date);
+    
+    if (!orderId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Order ID is required" 
+      });
+    }
+    
+    const result = await orderService.updateOrderStatus(orderId, status, pickup_date);
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(result.status || 500).json(result);
+    }
+  });
+}));
+
 // ==================== DELETE ROUTES ====================
 
 router.delete('/products-delete/:id', requireAuthentication, asyncHandler(async (req, res) => {
